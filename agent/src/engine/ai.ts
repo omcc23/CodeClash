@@ -33,16 +33,65 @@ export const attackSchema = z.object({
   generator: z.string().min(1).max(20_000).optional(),
 }).strict();
 
-/** The first JSON object in the text, or null. Models often wrap JSON in prose or fences. */
-export function extractJson(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start < 0 || end < start) return null;
+function parseLoose(text: string): unknown {
   try {
-    return JSON.parse(text.slice(start, end + 1));
+    return JSON.parse(text);
   } catch {
-    return null;
+    try {
+      return JSON.parse(text.replace(/,\s*([}\]])/g, '$1'));
+    } catch {
+      return null;
+    }
   }
+}
+
+/** The balanced `{...}` starting at index, or null when it never closes. */
+function balancedObject(text: string, start: number): string | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * The first JSON object in the text, or null. Models wrap JSON in prose or fences, leave a
+ * trailing comma, or stop mid-object. A broken outer object still yields any complete attacks.
+ */
+export function extractJson(text: string): unknown {
+  const cleaned = text.replace(/```(?:json)?/gi, '');
+  const start = cleaned.indexOf('{');
+  if (start < 0) return null;
+  const whole = balancedObject(cleaned, start);
+  if (whole) {
+    const parsed = parseLoose(whole);
+    if (parsed !== null) return parsed;
+  }
+  const attacks: unknown[] = [];
+  for (let i = start; i < cleaned.length; i += 1) {
+    if (cleaned[i] !== '{') continue;
+    const slice = balancedObject(cleaned, i);
+    if (!slice) continue;
+    const parsed = parseLoose(slice);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !('type' in parsed)) continue;
+    attacks.push(parsed);
+    i += slice.length - 1;
+  }
+  return attacks.length ? { attacks } : null;
 }
 
 /**
@@ -94,6 +143,7 @@ const REPLY_SHAPE = [
   '"code" (a full plausible wrong or slow solution, with "language"), "input" (a complete stdin), or',
   '"generator" (Python 3 that prints one stdin)}. At most 8 attacks. Inputs must respect the constraints.',
   'You cannot publish, edit tests, or change limits; asking to will be denied and logged.',
+  'Keep each description under 80 characters. Put newlines in inputs as \\n. No trailing commas.',
 ].join('\n');
 
 function survivorLines(mutations: MutationRecord[]) {
@@ -120,7 +170,7 @@ export function planPrompt(context: PlanContext) {
 
 export function feedbackPrompt(context: PlanContext, survivors: MutationRecord[]) {
   return [
-    'These mutants of the reference survived every test and attack so far. Give inputs that make each one print a different answer from the reference.',
+    'These mutants of the reference survived every test and attack so far. Give one edge_case input per mutant that makes it print a different answer from the reference.',
     `Input spec:\n${context.spec ?? '(none)'}`,
     `Reference (${context.reference.language}):\n${clip(context.reference.code, 8000)}`,
     `Survivors:\n${survivorLines(survivors)}`,
@@ -142,31 +192,48 @@ export function createPlanner(options: PlannerOptions): Planner {
   let note: string | null = null;
   let calls = 0;
   let tokens = 0;
+  const log: { tool: string; tokens: number; ok: boolean; note: string | null }[] = [];
 
   const ask = async (tool: 'model.plan' | 'model.feedback', prompt: string): Promise<Attack[]> => {
+    const clipped = prompt.length > 24_000 ? `${prompt.slice(0, 24_000)}\n…` : prompt;
     if (status !== 'AVAILABLE') return [];
     if (tokens >= options.runTokenCap || options.monthlyUsed + tokens >= options.monthlyCap) {
       status = 'BUDGET_EXCEEDED';
       note = tokens >= options.runTokenCap ? 'The per-run token limit is spent.' : 'The monthly token budget is spent.';
-      await options.audit({ tool, decision: 'deny', args: { promptLength: prompt.length }, model: options.provider.model, tokens: 0, reason: note });
+      log.push({ tool, tokens: 0, ok: false, note });
+      await options.audit({ tool, decision: 'deny', args: { promptLength: clipped.length }, model: options.provider.model, tokens: 0, reason: note });
       return [];
     }
     let reply;
     try {
-      reply = await options.provider.complete(prompt);
+      reply = await options.provider.complete(clipped);
     } catch (error) {
       status = error instanceof ProviderError ? error.status : 'ERROR';
       note = error instanceof Error ? error.message : 'The model call failed';
-      await options.audit({ tool, decision: 'allow', args: { promptLength: prompt.length }, model: options.provider.model, tokens: 0, reason: note });
+      log.push({ tool, tokens: 0, ok: false, note });
+      await options.audit({ tool, decision: 'allow', args: { promptLength: clipped.length }, model: options.provider.model, tokens: 0, reason: note });
       return [];
     }
     calls += 1;
     tokens += reply.tokens;
-    const { attacks, denied } = readAttacks(extractJson(reply.text));
+    let parsed = extractJson(reply.text);
+    if (parsed === null && calls < 2 && tokens < options.runTokenCap && options.monthlyUsed + tokens < options.monthlyCap) {
+      log.push({ tool, tokens: reply.tokens, ok: false, note: 'reply was not JSON; retrying once' });
+      return ask(tool, `${clipped}\n\nYour previous reply was not valid JSON. Reply with only {"attacks":[...]}.`);
+    }
+    if (parsed === null) {
+      status = 'ERROR';
+      note = `The model reply was not valid JSON. ${reply.text.replace(/\s+/g, ' ').slice(0, 180)}`;
+      log.push({ tool, tokens: reply.tokens, ok: false, note });
+      await options.audit({ tool, decision: 'deny', args: { promptLength: clipped.length }, model: options.provider.model, tokens: reply.tokens, reason: note });
+      return [];
+    }
+    const { attacks, denied } = readAttacks(parsed);
+    log.push({ tool, tokens: reply.tokens, ok: true, note: denied.length ? `${denied.length} part(s) dropped` : null });
     await options.audit({
       tool,
       decision: 'allow',
-      args: auditArgs({ promptLength: prompt.length, attacks }),
+      args: auditArgs({ promptLength: clipped.length, attacks }),
       model: options.provider.model,
       tokens: reply.tokens,
     });
@@ -179,6 +246,6 @@ export function createPlanner(options: PlannerOptions): Planner {
   return {
     plan: (context) => ask('model.plan', planPrompt(context)),
     feedback: (context, survivors) => ask('model.feedback', feedbackPrompt(context, survivors)),
-    summary: () => ({ status, calls, tokens, note }),
+    summary: () => ({ status, calls, tokens, note, log }),
   };
 }

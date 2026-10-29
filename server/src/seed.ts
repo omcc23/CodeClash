@@ -302,11 +302,13 @@ const past = rounds.map((round, index) => ({
 }));
 past.push({ title: 'Library cup', startsAt: hourOf(now - 14 * DAY), players: sample(people, 40), problems: libraryPool, minutes: 240 });
 
+const adminPerson: Person = { _id: admin._id, name: 'Admin', skill: 1550 };
 let contestSubmissions = 0;
-for (const item of past) {
+for (const [index, item] of past.entries()) {
+  const players = index < 5 ? [...item.players, adminPerson] : item.players;
   const created = await createContest({ title: item.title, status: 'published', startsAt: item.startsAt, minutes: item.minutes, problems: item.problems });
-  await seat(created._id, item.players, 'competing', created.startsAt.getTime());
-  contestSubmissions += await playContest(created, item.players, item.problems, item.minutes);
+  await seat(created._id, players, 'competing', created.startsAt.getTime());
+  contestSubmissions += await playContest(created, players, item.problems, item.minutes);
   await applyRatings(db, String(created._id));
 }
 
@@ -326,6 +328,32 @@ for (const player of sample(warmupPlayers, 8)) {
     verdict: null, reason: null, submittedAt: new Date(), judgedAt: null, seeded: true,
   });
   live.push({ id: insertedId });
+}
+const planted = warmupPool[0];
+const [copierA, copierB] = warmupPlayers;
+if (planted && copierA && copierB) {
+  const copied = [
+    'def solve():',
+    '    count = int(input())',
+    '    values = list(map(int, input().split()))',
+    '    best = values[0]',
+    '    running = 0',
+    '    index = 0',
+    '    while index < count:',
+    '        current = values[index]',
+    '        running = current if running + current < current else running + current',
+    '        if running > best:',
+    '            best = running',
+    '        index = index + 1',
+    '    print(best)',
+    'solve()',
+  ].join('\n');
+  const when = new Date();
+  await db.collection('submissions').insertMany([copierA, copierB].map((player) => ({
+    userId: player._id, contestId: warmup._id, problemVersionId: planted.versionId, problemId: planted.problemId,
+    language: 'python', code: copied, kind: 'contest', status: 'scored', idempotencyKey: null, claimToken: null,
+    verdict: 'AC', reason: null, submittedAt: when, judgedAt: when, seeded: true, ipHash: null,
+  })));
 }
 try {
   const redis = new Redis(process.env.REDIS_URL ?? 'redis://127.0.0.1:6379', { lazyConnect: true, maxRetriesPerRequest: 1 });
@@ -366,6 +394,26 @@ for (const person of people) {
       add(problem.reference, 'AC', 0);
     }
   }
+}
+const adminPool = practice.filter((p) => p.rating <= 1700);
+const adminProblems = adminPool.length ? adminPool : practice;
+for (let day = 0; day < 90; day += 1) {
+  if (day % 2 === 1 && day > 2) continue;
+  const start = today - day * DAY;
+  const span = day === 0 ? Math.max(MINUTE, now - start - MINUTE) : DAY;
+  const at = start + Math.floor(rng.next() * span);
+  const problem = pick(adminProblems);
+  const add = (code: { language: SourceLanguage; code: string }, verdict: string, offset: number) => submissions.push({
+    userId: admin._id, contestId: null, problemVersionId: problem.versionId, problemId: problem.problemId,
+    language: code.language, code: code.code, kind: 'practice', status: 'judged', idempotencyKey: null, claimToken: null,
+    verdict, reason: null, submittedAt: new Date(at + offset), judgedAt: new Date(at + offset + 2000), seeded: true,
+  });
+  if (problem.wrong.length && rng.next() < 0.3) {
+    const wrong = pick(problem.wrong);
+    add(wrong, wrong.verdict === 'AC' ? 'WA' : wrong.verdict, -8 * MINUTE);
+  }
+  if (rng.next() < 0.12) add(problem.reference, 'TLE', -3 * MINUTE);
+  add(problem.reference, 'AC', 0);
 }
 for (let i = 0; i < submissions.length; i += 1000) await db.collection('submissions').insertMany(submissions.slice(i, i + 1000));
 

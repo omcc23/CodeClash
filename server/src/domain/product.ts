@@ -1,5 +1,5 @@
 import { defaultLimit, practiceStreak, rateContest, type Role, type SourceLanguage } from '@codeclash/shared';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import { type Db, ObjectId } from 'mongodb';
 import { HttpError } from './errors.js';
 import type { RunCase } from './problems.js';
@@ -9,9 +9,10 @@ export function hashVerifyToken(raw: string) {
   return createHash('sha256').update(raw).digest('hex');
 }
 
+/** A 6-digit code emailed to the address the person registered. It expires in 15 minutes. */
 export function newVerifyToken() {
-  const token = randomBytes(24).toString('base64url');
-  return { token, tokenHash: hashVerifyToken(token), expiresAt: new Date(Date.now() + 24 * 3600_000) };
+  const token = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  return { token, tokenHash: hashVerifyToken(token), expiresAt: new Date(Date.now() + 15 * 60_000) };
 }
 
 /** Missing the field counts as verified, so accounts created before this rule keep working. */
@@ -25,7 +26,7 @@ export async function assertVerified(db: Db, userId: string) {
 export async function verifyEmail(db: Db, token: string) {
   const user = await db.collection('users').findOne({ verifyTokenHash: hashVerifyToken(token) });
   if (!user || !(user.verifyExpires instanceof Date) || user.verifyExpires.getTime() < Date.now()) {
-    throw new HttpError(400, 'This verification link is not valid');
+    throw new HttpError(400, 'That code is wrong or has expired');
   }
   await db.collection('users').updateOne(
     { _id: user._id },

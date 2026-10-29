@@ -70,10 +70,11 @@ describe('deterministic hardening', () => {
   it('without a spec it still replays mutants and says what it skipped', async () => {
     const result = await runHardening(job({ spec: null }));
     expect(result.metrics.spec).toBe('none');
-    expect(result.metrics.attacks).toEqual({ boundary: 0, random: 0, max: 0, model: 0 });
-    expect(result.proposals).toHaveLength(0);
+    expect(result.metrics.attacks).toMatchObject({ boundary: 0, random: 0, max: 0, model: 0 });
+    expect(result.metrics.attacks.shape).toBeGreaterThan(0);
+    expect(result.metrics.projectedScore).toBeGreaterThan(result.metrics.score!);
     expect(result.metrics.mutants.equivalent).toBe(0);
-    expect(result.notes.join(' ')).toMatch(/No input spec/);
+    expect(result.notes.join(' ')).toMatch(/derived from the current tests/);
   });
 
   it('stops on a reference that does not compile and warns when it fails tests', async () => {
@@ -119,11 +120,12 @@ describe('model attacks', () => {
     expect(ai.asked[0]).toBe('plan');
   });
 
-  it('drops model inputs when there is no spec to check them', async () => {
+  it('keeps a model input without a spec when the reference can answer it', async () => {
     const ai = planner([{ type: 'edge_case', description: 'x', input: '1\n3\n' }]);
     const result = await runHardening(job({ planner: ai, spec: null }));
-    expect(result.metrics.attacks.model).toBe(0);
-    expect(result.notes.join(' ')).toMatch(/cannot be validated/);
+    expect(result.metrics.attacks.model).toBe(1);
+    expect(result.notes.join(' ')).toMatch(/reference answers them/);
+    expect(result.notes.join(' ')).not.toMatch(/cannot be validated/);
   });
 
   it('sends survivors back to the model and uses its targeted inputs', async () => {

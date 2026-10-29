@@ -1,4 +1,8 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+config({ path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env') });
 import { hostname } from 'node:os';
 import { Redis } from 'ioredis';
 import { MongoClient } from 'mongodb';

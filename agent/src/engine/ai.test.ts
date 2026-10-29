@@ -39,6 +39,11 @@ describe('model replies', () => {
     expect(extractJson('Sure!\n```json\n{"attacks":[]}\n```')).toEqual({ attacks: [] });
     expect(extractJson('no json')).toBeNull();
     expect(extractJson('{broken')).toBeNull();
+    expect(extractJson('{"attacks":[{"type":"edge_case","description":"d","input":"1"},]}')).toEqual({
+      attacks: [{ type: 'edge_case', description: 'd', input: '1' }],
+    });
+    const cutOff = '{"attacks":[{"type":"edge_case","description":"kept","input":"1\\n"},{"type":"edge_case","description":"cut';
+    expect(extractJson(cutOff)).toEqual({ attacks: [{ type: 'edge_case', description: 'kept', input: '1\n' }] });
   });
 
   it('truncates long code in audit arguments and adds a hash', () => {
@@ -75,7 +80,7 @@ describe('planner', () => {
     expect(attacks).toHaveLength(1);
     expect(rows.map((r) => [r.tool, r.decision])).toEqual([['model.plan', 'allow'], ['publish', 'deny']]);
     expect(rows[0]!.tokens).toBe(40);
-    expect(planner.summary()).toEqual({ status: 'AVAILABLE', calls: 1, tokens: 40, note: null });
+    expect(planner.summary()).toMatchObject({ status: 'AVAILABLE', calls: 1, tokens: 40, note: null });
   });
 
   it('stops at the per-run and monthly budgets', async () => {
@@ -89,11 +94,18 @@ describe('planner', () => {
     expect(monthly.planner.summary()).toMatchObject({ status: 'BUDGET_EXCEEDED', calls: 0, note: 'The monthly token budget is spent.' });
   });
 
+  it('retries once when the first reply is not JSON', async () => {
+    const { planner } = setup(new FakeProvider(['not json', '{"attacks":[{"type":"edge_case","description":"d","input":"1\\n"}]}']));
+    const attacks = await planner.plan(context);
+    expect(attacks).toHaveLength(1);
+    expect(planner.summary()).toMatchObject({ status: 'AVAILABLE', calls: 2, tokens: 80 });
+  });
+
   it('maps provider failures to a status and makes no further calls', async () => {
     const limited = setup(new FakeProvider([new ProviderError('RATE_LIMITED', 'slow down'), '{"attacks":[]}']));
     await limited.planner.plan(context);
     await limited.planner.feedback(context, [survivor]);
-    expect(limited.planner.summary()).toEqual({ status: 'RATE_LIMITED', calls: 0, tokens: 0, note: 'slow down' });
+    expect(limited.planner.summary()).toMatchObject({ status: 'RATE_LIMITED', calls: 0, tokens: 0, note: 'slow down' });
     const broken = setup(new FakeProvider([new Error('socket hang up')]));
     await broken.planner.plan(context);
     expect(broken.planner.summary()).toMatchObject({ status: 'ERROR', note: 'socket hang up' });

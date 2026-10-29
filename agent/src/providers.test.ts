@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  anthropicProvider, geminiProvider, openAiCompatibleProvider, postJson, providerFromEnv, ProviderError,
+  anthropicProvider, geminiKeyPool, geminiKeysFromEnv, geminiProvider, openAiCompatibleProvider, postJson, providerFromEnv, ProviderError,
 } from './providers.js';
 
 const original = globalThis.fetch;
@@ -29,11 +29,11 @@ describe('postJson', () => {
     await expect(postJson('https://x', { headers: {}, body: {} }, fast)).rejects.toMatchObject({ status: 'ERROR', message: 'The model did not answer in time' });
   });
 
-  it('retries once on 429 and 5xx', async () => {
+  it('retries up to twice on 429 and 5xx', async () => {
     const seen = respond({ status: 503 }, { status: 200, body: { ok: 1 } });
     expect(await postJson('https://x', { headers: {}, body: {} }, fast)).toEqual({ ok: 1 });
     expect(seen).toHaveLength(2);
-    respond({ status: 429 }, { status: 429 });
+    respond({ status: 429 }, { status: 429 }, { status: 429 });
     await expect(postJson('https://x', { headers: {}, body: {} }, fast)).rejects.toMatchObject({ status: 'RATE_LIMITED' });
   });
 
@@ -78,5 +78,33 @@ describe('providers', () => {
     expect(providerFromEnv({ AGENT_PROVIDER: 'mystery', AGENT_MODEL: 'm' }).reason).toMatch(/Unknown/);
     expect(providerFromEnv({ AGENT_PROVIDER: 'haiku', ANTHROPIC_MODEL: 'old', ANTHROPIC_API_KEY: 'k' }).provider?.model).toBe('old');
     expect(providerFromEnv({ AGENT_PROVIDER: 'gemini', GEMINI_MODEL: 'g', GEMINI_API_KEY: 'k' }).provider?.model).toBe('g');
+    expect(geminiKeysFromEnv({ GEMINI_API_KEY: 'a', GEMINI_API_KEY_2: 'b', GEMINI_API_KEYS: 'b, c' })).toEqual(['a', 'b', 'c']);
+    expect(geminiKeysFromEnv({})).toEqual([]);
+  });
+
+  it('asks Gemini for schema-valid JSON and drops the schema if the model rejects it', async () => {
+    const seen = respond(
+      { status: 400, body: {} },
+      { status: 200, body: { candidates: [{ content: { parts: [{ text: '{"attacks":[]}' }] } }], usageMetadata: { totalTokenCount: 4 } } },
+    );
+    expect(await geminiProvider('k', 'model-g', fast).complete('p')).toEqual({ text: '{"attacks":[]}', tokens: 4 });
+    expect(JSON.parse(String(seen[0]!.init.body)).generationConfig.responseSchema.required).toEqual(['attacks']);
+    expect(JSON.parse(String(seen[1]!.init.body)).generationConfig.responseSchema).toBeUndefined();
+  });
+
+  it('moves to the next Gemini key when one is rate limited or rejected', async () => {
+    const seen = respond(
+      { status: 429, body: {} },
+      { status: 200, body: { candidates: [{ content: { parts: [{ text: 'ok' }] } }], usageMetadata: { totalTokenCount: 3 } } },
+      { status: 200, body: { candidates: [{ content: { parts: [{ text: 'again' }] } }], usageMetadata: { totalTokenCount: 2 } } },
+    );
+    const pool = geminiKeyPool(['key-one', 'key-two'], 'model-g', fast);
+    expect(await pool.complete('p')).toEqual({ text: 'ok', tokens: 3 });
+    expect(await pool.complete('p')).toEqual({ text: 'again', tokens: 2 });
+    const keys = seen.map((call) => (call.init.headers as Record<string, string>)['x-goog-api-key']);
+    expect(keys).toEqual(['key-one', 'key-two', 'key-two']);
+
+    respond({ status: 401, body: {} }, { status: 429, body: {} });
+    await expect(geminiKeyPool(['gone', 'limited'], 'model-g', fast).complete('p')).rejects.toMatchObject({ status: 'RATE_LIMITED' });
   });
 });

@@ -77,6 +77,11 @@ export function Guide() {
           <Line cmd="subtask">Group name on the test. Same name under Subtasks, with points.</Line>
         </Term>
 
+        <Term path="sources">
+          <Line cmd="codeforces">Problems marked Codeforces come from the DeepMind CodeContests dataset (CC BY 4.0).</Line>
+          <Line cmd="checked">Each one was re-verified in our sandbox before import.</Line>
+        </Term>
+
         <Term path="problemset">
           <Line cmd="hidden">Live contest problems, until that contest is published.</Line>
           <Line cmd="visible">Practice problems that were never in a contest.</Line>

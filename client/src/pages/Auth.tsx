@@ -1,14 +1,65 @@
 import { ArrowRight, Eye, EyeOff } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, loadSession, type Session } from '../api';
 import { Alert, errorText, toast } from '../ui';
+
+export function VerifyEmail({ onSession }: { onSession: (session: Session) => void }) {
+  const [params] = useSearchParams();
+  const token = params.get('token') ?? '';
+  const navigate = useNavigate();
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (token.length < 10) {
+      setError('This confirmation link is missing its token.');
+      return;
+    }
+    let cancelled = false;
+    api<{ emailVerified: boolean }>('/api/auth/verify', { method: 'POST', body: JSON.stringify({ token }) })
+      .then(async () => {
+        const stored = loadSession();
+        if (stored) {
+          const current = await api<{ id: string; role: string; displayName: string; emailVerified: boolean; rating: number }>('/api/me');
+          onSession({ ...stored, user: { id: current.id, role: current.role, displayName: current.displayName, emailVerified: true, rating: current.rating } });
+        }
+        if (!cancelled) {
+          toast('Email confirmed', 'ok');
+          navigate('/arena');
+        }
+      })
+      .catch((err) => { if (!cancelled) setError(errorText(err)); });
+    return () => { cancelled = true; };
+  }, [token, navigate, onSession]);
+
+  return (
+    <div className="page narrow">
+      <div className="auth-card">
+        <h1>Confirm your email</h1>
+        {error ? <Alert>{error}</Alert> : <p className="muted">Checking the link…</p>}
+      </div>
+    </div>
+  );
+}
 
 export function Auth({ onSession }: { onSession: (session: Session) => void }) {
   const pending = loadSession();
   const [mode, setMode] = useState<'login' | 'register' | 'verify'>(pending?.user.emailVerified === false ? 'verify' : 'login');
-  const [token, setToken] = useState(pending?.verifyToken ?? '');
+  const [token, setToken] = useState('');
+  const [mailed, setMailed] = useState(true);
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = window.setTimeout(() => setCooldown((value) => value - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [cooldown]);
   const [email, setEmail] = useState('');
+
+  useEffect(() => {
+    if (mode !== 'verify' || email) return;
+    api<{ email: string }>('/api/me').then((me) => setEmail(me.email)).catch(() => {});
+  }, [mode, email]);
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [reveal, setReveal] = useState(false);
@@ -23,15 +74,17 @@ export function Auth({ onSession }: { onSession: (session: Session) => void }) {
     setBusy(true);
     try {
       const path = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
-      const session = await api<Session & { verifyToken?: string }>(path, {
+      const result = await api<Session & { verifyToken?: string; mailed?: boolean }>(path, {
         method: 'POST',
         body: JSON.stringify(mode === 'login' ? { email, password } : { email, password, displayName }),
       });
+      const { verifyToken: shown, mailed: didMail, ...session } = result;
       onSession(session);
       if (session.user.emailVerified === false) {
-        setToken(session.verifyToken ?? '');
+        setMailed(didMail !== false);
+        setToken(didMail === false ? shown ?? '' : '');
         setMode('verify');
-        toast('Confirm your email before competing', 'warn');
+        toast(didMail === false ? 'Mail is not configured, so the token is shown here' : 'Check your inbox to confirm your email', 'warn');
         return;
       }
       toast(`Welcome${session.user.displayName ? `, ${session.user.displayName}` : ''}`, 'ok');
@@ -66,13 +119,31 @@ export function Auth({ onSession }: { onSession: (session: Session) => void }) {
       <div className="auth-card">
         {mode === 'verify' ? (
           <>
-            <h1>Confirm your email</h1>
-            <p className="muted small">A seat, a submission, or a quiz answer needs a confirmed email. This machine has no mail server, so the link is shown here.</p>
+            <h1>Enter your code</h1>
+            <p className="muted small">
+              {mailed
+                ? `A 6-digit code was sent to ${email || 'your email'}. It expires in 15 minutes.`
+                : 'Mail could not be sent from this machine, so the code is shown here.'}
+            </p>
             <form onSubmit={confirm}>
-              <label htmlFor="token">Verification token</label>
-              <input id="token" value={token} onChange={(e) => setToken(e.target.value)} required autoComplete="one-time-code" />
+              <label htmlFor="token">Confirmation code</label>
+              <input id="token" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={token} onChange={(e) => setToken(e.target.value.replace(/\D/g, '').slice(0, 6))} required placeholder="000000" />
+              {pending ? (
+                <button className="btn" type="button" disabled={busy || cooldown > 0} style={{ marginTop: 'var(--space-3)' }} onClick={() => {
+                  setBusy(true);
+                  api<{ mailed?: boolean; verifyToken?: string }>('/api/auth/verify/resend', { method: 'POST', body: '{}' })
+                    .then((sent) => {
+                      setMailed(sent.mailed !== false);
+                      if (sent.mailed === false) setToken(sent.verifyToken ?? '');
+                      setCooldown(60);
+                      toast('Confirmation email sent again', 'ok');
+                    })
+                    .catch((err) => setError(errorText(err)))
+                    .finally(() => setBusy(false));
+                }}>{cooldown > 0 ? `resend in ${cooldown}s` : 'resend email'}</button>
+              ) : null}
               {error ? <Alert>{error}</Alert> : null}
-              <button className="btn primary lg" type="submit" disabled={busy} style={{ width: '100%', marginTop: 'var(--space-4)' }}>
+              <button className="btn primary lg" type="submit" disabled={busy || token.length !== 6} style={{ width: '100%', marginTop: 'var(--space-4)' }}>
                 {busy ? 'please wait…' : 'Confirm email'} <ArrowRight size={16} />
               </button>
             </form>

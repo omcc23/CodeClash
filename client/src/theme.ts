@@ -25,14 +25,14 @@ const t = (id: string, name: string, dark: boolean, c: [string, string, string, 
 
 //                                bg         surface    raised     fg         muted      line       accent     on-accent  ok         bad        warn
 export const THEMES: Theme[] = [
-  t('paper', 'Paper', false, ['#ffffff', '#f6f8fa', '#eef1f5', '#1c2128', '#57606a', '#d8dee4', '#2563eb', '#ffffff', '#1a7f37', '#cf222e', '#9a6700']),
+  t('paper', 'Paper', false, ['#f6f4ef', '#fffcf7', '#ebe6dc', '#1a1814', '#5f584e', '#ddd6c8', '#1e3a8a', '#ffffff', '#1b7a38', '#b42318', '#8a5a00']),
   t('latte', 'Latte', false, ['#eff1f5', '#e6e9ef', '#dce0e8', '#4c4f69', '#6c6f85', '#ccd0da', '#8839ef', '#ffffff', '#2f7d1f', '#d20f39', '#b86e0b']),
   t('solarized', 'Solarized', false, ['#fdf6e3', '#f5eed8', '#eee8d5', '#073642', '#586e75', '#e3dcc6', '#1d6fa8', '#fdf6e3', '#5f7a00', '#c8261f', '#946f00']),
-  t('paperback', 'Paperback', false, ['#f5eedc', '#efe6cf', '#e7dcc0', '#3a2f23', '#6b5c47', '#dccfae', '#9c4a1a', '#fff8ea', '#4b7a1f', '#b0271c', '#8f6200']),
-  t('dawn', 'Rosé Dawn', false, ['#faf4ed', '#fffaf3', '#f2e9e1', '#575279', '#797593', '#e4dcd4', '#286983', '#ffffff', '#3f7f6b', '#b4637a', '#b8701a']),
-  t('mint', 'Mint', false, ['#f4fbf7', '#eaf6ef', '#ddefe4', '#0f2e25', '#4a6b5f', '#cfe5d8', '#0d8a6a', '#ffffff', '#1f7a3a', '#c23b3b', '#946200']),
-  t('sakura', 'Sakura', false, ['#fff6f8', '#ffeef2', '#ffe1e8', '#3d1f2a', '#7a5561', '#f4cfd9', '#d6336c', '#ffffff', '#2b8a3e', '#c92a2a', '#a86500']),
-  t('mono', 'Monochrome', false, ['#ffffff', '#fafafa', '#f0f0f0', '#000000', '#525252', '#e5e5e5', '#000000', '#ffffff', '#000000', '#000000', '#000000']),
+  t('paperback', 'Paperback', false, ['#f3ead8', '#faf4e8', '#e7dcc4', '#2a2118', '#6b5c49', '#d4c4a6', '#9a3412', '#fff8ee', '#3f6f1c', '#a61b16', '#8a5a00']),
+  t('dawn', 'Rosé Dawn', false, ['#f7f0e8', '#fffaf5', '#efe4da', '#3f3858', '#6d6780', '#e0d4c8', '#1d5c73', '#ffffff', '#2f6d5a', '#a14d64', '#946214']),
+  t('mint', 'Mint', false, ['#f3f7f4', '#ffffff', '#e5eee8', '#14241e', '#4d6458', '#d3e0d7', '#0f6e56', '#ffffff', '#1c6b34', '#b42318', '#8a5a00']),
+  t('sakura', 'Sakura', false, ['#faf7f6', '#ffffff', '#f1e8e6', '#2c1c22', '#6d5560', '#e6d5d2', '#b4335a', '#ffffff', '#2b7a3e', '#a12828', '#8a5a00']),
+  t('mono', 'Monochrome', false, ['#fafafa', '#ffffff', '#f0f0f0', '#111111', '#4a4a4a', '#d4d4d4', '#111111', '#ffffff', '#111111', '#111111', '#525252']),
   t('midnight', 'Midnight', true, ['#0d1117', '#151b23', '#1c2430', '#e6edf3', '#8d96a0', '#2a323c', '#58a6ff', '#0d1117', '#3fb950', '#f85149', '#d29922']),
   t('dracula', 'Dracula', true, ['#282a36', '#21222c', '#343746', '#f8f8f2', '#a3a8c3', '#3c3f52', '#bd93f9', '#1e1f29', '#50fa7b', '#ff5555', '#f1fa8c']),
   t('nord', 'Nord', true, ['#2e3440', '#3b4252', '#434c5e', '#eceff4', '#aab3c5', '#4c566a', '#88c0d0', '#2e3440', '#a3be8c', '#e07a84', '#ebcb8b']),
@@ -41,10 +41,10 @@ export const THEMES: Theme[] = [
   t('mocha', 'Mocha', true, ['#1e1e2e', '#181825', '#313244', '#cdd6f4', '#a6adc8', '#3a3b50', '#cba6f7', '#1e1e2e', '#a6e3a1', '#f38ba8', '#f9e2af']),
   t('monokai', 'Monokai', true, ['#272822', '#1f201b', '#3e3d32', '#f8f8f2', '#b0aa8f', '#45443a', '#66d9ef', '#272822', '#a6e22e', '#f92672', '#e6db74']),
   t('onedark', 'One Dark', true, ['#282c34', '#21252b', '#2c313a', '#dcdfe4', '#9da5b4', '#3b4048', '#61afef', '#1e2127', '#98c379', '#e06c75', '#e5c07b']),
-  t('ocean', 'Ocean', true, ['#0b1f2a', '#0f2835', '#153444', '#d9eef5', '#8fb3c2', '#1f4152', '#2ec4b6', '#06161e', '#57d98a', '#ff6b6b', '#ffc857']),
-  t('synthwave', 'Synthwave', true, ['#241b2f', '#1d1528', '#2f2440', '#f6eaff', '#b9a6d3', '#3b2c50', '#ff7edb', '#241b2f', '#72f1b8', '#fe4450', '#fede5d']),
-  t('terminal', 'Terminal', true, ['#070b07', '#0c130c', '#132013', '#b8f7b8', '#72b872', '#1c301c', '#39ff14', '#051005', '#39ff14', '#ff5f56', '#ffbd2e']),
-  t('amber', 'Amber CRT', true, ['#140e02', '#1b1405', '#261c08', '#ffd27a', '#c49a4a', '#3a2a0c', '#ffb000', '#140e02', '#a8e05f', '#ff6b57', '#ffb000']),
+  t('ocean', 'Ocean', true, ['#0e1c24', '#132833', '#1a3644', '#d7ebe4', '#8eafb0', '#244556', '#3d9e8f', '#0e1c24', '#6db87a', '#d46a6a', '#d4a85a']),
+  t('synthwave', 'Synthwave', true, ['#1a1522', '#221c2c', '#2c2438', '#efe6f4', '#b3a4c4', '#3a3148', '#d57ab5', '#1a1522', '#7dcaa8', '#e07a84', '#e2c56a']),
+  t('terminal', 'Terminal', true, ['#121612', '#181d18', '#222822', '#d5e6d2', '#8aa384', '#2c382c', '#7dbe6a', '#101510', '#8fbf78', '#d4786a', '#c6a15a']),
+  t('amber', 'Amber CRT', true, ['#1a140c', '#221b12', '#2c2418', '#f0e2c4', '#b39a6e', '#3d3220', '#d89a3a', '#1a140c', '#8fb56a', '#d4725c', '#e0b15a']),
 ];
 
 const KEY = 'cc.theme';

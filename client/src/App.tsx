@@ -5,7 +5,7 @@ import { api, loadSession, saveSession, SIGNED_OUT, type Session } from './api';
 import { Admin } from './pages/Admin';
 import { Guide } from './pages/Guide';
 import { Arena } from './pages/Arena';
-import { Auth } from './pages/Auth';
+import { Auth, VerifyEmail } from './pages/Auth';
 import { Authoring } from './pages/Authoring';
 import { ContestRoom } from './pages/ContestRoom';
 import { Control } from './pages/Control';
@@ -76,13 +76,14 @@ export default function App() {
       </header>
       {unverified ? (
         <div className="page" style={{ paddingBottom: 0 }}>
-          <div className="alert warn" role="status">Confirm your email before you take a seat or submit. <Link to="/auth">Open the confirmation page</Link></div>
+          <div className="alert warn" role="status">Enter the 6-digit code sent to your email before you take a seat or submit.</div>
         </div>
       ) : null}
       <main id="main" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Home signedIn={!!session} />} />
           <Route path="/auth" element={session && !unverified ? <Navigate to="/arena" /> : <Auth onSession={setSession} />} />
+          <Route path="/auth/verify" element={<VerifyEmail onSession={setSession} />} />
           <Route path="/arena" element={<Arena />} />
           <Route path="/arena/:id" element={<ContestRoom me={session?.user.id ?? null} />} />
           <Route path="/problemset" element={<Problemset />} />

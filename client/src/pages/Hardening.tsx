@@ -39,7 +39,7 @@ interface Metrics {
   boundary: { kind: string; generated: boolean; covered: boolean }[];
   performance: { checked: boolean; maxInputSize: number; largestTestSize: number; referenceMs: number | null; limitMs: number; proposed: boolean; slowSolutionsCaught: string[] };
   spec: 'given' | 'drafted' | 'none';
-  attacks: { boundary: number; random: number; max: number; model: number };
+  attacks: { boundary: number; random: number; max: number; shape?: number; model: number };
 }
 interface Run {
   id: string;
@@ -52,6 +52,9 @@ interface Run {
   draftedSpec: string | null;
   calls: number;
   tokens: number;
+  model: string | null;
+  aiNote: string | null;
+  callLog: { tool: string; tokens: number; ok: boolean; note: string | null }[];
   error: string | null;
   mutations: Mutation[];
   proposals: Proposal[];
@@ -217,6 +220,7 @@ export function Hardening({ problemId, versionId, hasReference, startRequest, on
   const keyOf = new Map(run?.mutations.map((m) => [m.id, m.key]) ?? []);
   const survivors = run?.mutations.filter((m) => m.status === 'survived' || m.status === 'equivalent') ?? [];
   const aiStatus = run?.aiStatus ?? status?.status ?? 'DISABLED';
+  const modelName = run?.model || status?.model || '';
   const toggle = (id: string) => setSelected((current) => {
     const next = new Set(current);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -228,9 +232,11 @@ export function Hardening({ problemId, versionId, hasReference, startRequest, on
       {error ? <Alert>{error}</Alert> : null}
       <div className="harden-bar">
         <div className="row">
-          <span className={`pill ${AI_TONE[aiStatus] ?? ''}`} title={status?.reason ?? undefined}>
-            AI {aiStatus.toLowerCase().replace('_', ' ')}{status?.model ? ` · ${status.model}` : ''}
+          <span className={`pill ${AI_TONE[aiStatus] ?? ''}`} title={run?.aiNote ?? status?.reason ?? undefined}>
+            AI {aiStatus.toLowerCase().replace('_', ' ')}{modelName ? ` · ${modelName}` : ''}
+            {run ? ` · ${run.calls} calls · ${run.tokens} tokens` : ''}
           </span>
+          {status ? <span className="muted small" title="This month, across runs">budget {status.monthly.used}/{status.monthly.cap}</span> : null}
           {run ? <span className={`pill ${RUN_TONE[run.status] ?? ''}`}>{run.status.replace('_', ' ')}</span> : null}
           {run && active && run.stage ? <span className="muted small">{run.stage}</span> : null}
         </div>
@@ -256,7 +262,7 @@ export function Hardening({ problemId, versionId, hasReference, startRequest, on
         <div className="table-wrap">
           <Empty icon={<Bot size={28} />} title="No hardening runs yet">
             {hasReference
-              ? 'A run mutates the reference, attacks it with boundary, random, and max-size inputs, and proposes the tests that catch what the suite misses.'
+              ? 'A run mutates the reference, attacks it with boundary, random, and max-size inputs, and proposes the tests that catch what the suite misses. With no input spec, it derives inputs from the current tests.'
               : 'Add a reference solution first.'}
           </Empty>
         </div>
@@ -270,6 +276,13 @@ export function Hardening({ problemId, versionId, hasReference, startRequest, on
       {run?.error ? <Alert tone="bad">{run.error}</Alert> : null}
       {run && run.notes.length > 0 ? (
         <ul className="harden-notes">{run.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+      ) : null}
+      {run && run.callLog?.length ? (
+        <ul className="harden-notes">
+          {run.callLog.map((entry, index) => (
+            <li key={`${entry.tool}-${index}`}>{entry.tool} · {entry.ok ? 'ok' : 'failed'} · {entry.tokens} tokens{entry.note ? ` · ${entry.note}` : ''}</li>
+          ))}
+        </ul>
       ) : null}
 
       {metrics ? (
@@ -291,7 +304,7 @@ export function Hardening({ problemId, versionId, hasReference, startRequest, on
           <div className="two harden-facts">
             <div>
               <p className="section-title" style={{ marginTop: 0 }}>Boundary classes <span className="muted small">· spec {metrics.spec}</span></p>
-              {metrics.spec === 'none' ? <p className="muted small">No input spec, so boundary classes were not checked.</p> : (
+              {metrics.spec === 'none' ? <p className="muted small">No input spec, so boundary classes were not checked.{metrics.attacks.shape ? ` ${metrics.attacks.shape} inputs were derived from the current tests.` : ''}</p> : (
                 <div className="chips">
                   {metrics.boundary.map((b) => (
                     <span key={b.kind} className={`pill ${b.covered ? 'ok' : b.generated ? 'warn' : ''}`} title={b.covered ? 'a current test has it' : b.generated ? 'generated as an attack, not in the suite' : 'the spec does not allow it'}>

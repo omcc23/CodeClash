@@ -13,12 +13,14 @@ import { transitionContest } from '../domain/contests.js';
 import { HttpError, isDuplicateKey } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
 import { HARDEN_STREAM } from '@codeclash/agent/worker';
-import { providerFromEnv } from '@codeclash/agent/providers';
+import { listGeminiModels, geminiKeysFromEnv, providerFromEnv } from '@codeclash/agent/providers';
 import { approveProposals, assertArchiveAccess, runPublishCheck, testsFromZip, type RunCase } from '../domain/problems.js';
 import { reserveSeat, withdrawSeat } from '../domain/registration.js';
 import { leaderboard } from '../domain/scoring.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
 import { assertVerified, newVerifyToken, publicUser, rejudgeSubmissions, runSamples, solveRecord, verifyEmail } from '../domain/product.js';
+import { sendVerificationEmail } from '../mail.js';
+import { hashIp, runSimilarity } from '../domain/similarity.js';
 
 export interface AppDeps {
   db: Db;
@@ -177,11 +179,13 @@ export function createApp(deps: AppDeps) {
       const id = String(inserted.insertedId);
       const access = signAccess({ id, role: 'participant' });
       const refresh = await issueRefresh(db, id);
+      const mailed = await sendVerificationEmail(body.email.toLowerCase(), verify.token);
       res.status(201).json({
         access,
         refresh,
         user: { id, role: 'participant', displayName: body.displayName, emailVerified: false, rating: 1200 },
-        ...(process.env.NODE_ENV === 'production' ? {} : { verifyToken: verify.token }),
+        mailed,
+        ...(!mailed && process.env.NODE_ENV !== 'production' ? { verifyToken: verify.token } : {}),
       });
     } catch (error) {
       if ((error as { code?: number }).code === 11000) throw new HttpError(409, 'Email is already registered');
@@ -210,19 +214,29 @@ export function createApp(deps: AppDeps) {
   }));
 
   app.post('/api/auth/verify', asyncRoute(async (req, res) => {
-    const body = z.object({ token: z.string().min(10) }).parse(req.body);
+    const body = z.object({ token: z.string().regex(/^\d{6}$/) }).parse(req.body);
+    const key = `verify:${req.ip || 'local'}`;
+    const attempts = await redis.incr(key);
+    if (attempts === 1) await redis.expire(key, 600);
+    if (attempts > 8) throw new HttpError(429, 'Too many confirmation attempts');
     res.json(await verifyEmail(db, body.token));
   }));
 
   app.post('/api/auth/verify/resend', asyncRoute(async (req, res) => {
     const user = auth(req);
+    const existing = await db.collection('users').findOne({ _id: new ObjectId(user.sub) });
+    if (!existing || existing.emailVerified !== false) throw new HttpError(409, 'This email is already verified');
     const verify = newVerifyToken();
-    const updated = await db.collection('users').updateOne(
-      { _id: new ObjectId(user.sub), emailVerified: false },
+    await db.collection('users').updateOne(
+      { _id: existing._id },
       { $set: { verifyTokenHash: verify.tokenHash, verifyExpires: verify.expiresAt } },
     );
-    if (updated.matchedCount === 0) throw new HttpError(409, 'This email is already verified');
-    res.json(process.env.NODE_ENV === 'production' ? { sent: true } : { sent: true, verifyToken: verify.token });
+    const mailed = await sendVerificationEmail(String(existing.email), verify.token);
+    res.json({
+      sent: true,
+      mailed,
+      ...(!mailed && process.env.NODE_ENV !== 'production' ? { verifyToken: verify.token } : {}),
+    });
   }));
 
   app.post('/api/auth/refresh', asyncRoute(async (req, res) => {
@@ -234,6 +248,63 @@ export function createApp(deps: AppDeps) {
     const body = z.object({ refresh: z.string() }).parse(req.body);
     await revokeRefresh(db, body.refresh);
     res.status(204).end();
+  }));
+
+  app.get('/api/me/history', asyncRoute(async (req, res) => {
+    const user = auth(req);
+    const userId = new ObjectId(user.sub);
+    const recent = await db.collection('submissions')
+      .find({ userId, verdict: { $ne: null } })
+      .project({ code: 0 })
+      .sort({ submittedAt: -1 })
+      .limit(20)
+      .toArray();
+    const problemIds = [...new Set(recent.map((row) => String(row.problemId)))].map((id) => new ObjectId(id));
+    const problems = problemIds.length
+      ? await db.collection('problems').find({ _id: { $in: problemIds } }).project({ title: 1 }).toArray()
+      : [];
+    const titles = new Map(problems.map((problem) => [String(problem._id), problem.title as string]));
+    const played = await db.collection('contests')
+      .find({ ratingsApplied: true, ratingDeltas: { $elemMatch: { userId: user.sub } } })
+      .project({ title: 1, startsAt: 1, ratingDeltas: 1 })
+      .sort({ startsAt: -1 })
+      .toArray();
+    const contestIds = played.map((contest) => contest._id);
+    const boards = contestIds.length
+      ? await db.collection('standings').find({ contestId: { $in: contestIds } }).project({ contestId: 1, userId: 1, solved: 1, penalty: 1, quizPoints: 1 }).toArray()
+      : [];
+    const contests = played.map((contest) => {
+      const delta = ((contest.ratingDeltas as { userId: string; before: number; after: number; delta: number }[]) ?? [])
+        .find((row) => row.userId === user.sub);
+      const rows = boards
+        .filter((row) => String(row.contestId) === String(contest._id))
+        .sort((a, b) => ((b.solved as number) - (a.solved as number)) || ((a.penalty as number) - (b.penalty as number)));
+      const mine = rows.findIndex((row) => String(row.userId) === user.sub);
+      const standing = mine >= 0 ? rows[mine] : undefined;
+      return {
+        id: String(contest._id),
+        title: contest.title,
+        startsAt: contest.startsAt,
+        rank: mine >= 0 ? mine + 1 : null,
+        field: rows.length,
+        solved: (standing?.solved as number) ?? 0,
+        delta: delta?.delta ?? 0,
+        before: delta?.before ?? null,
+        after: delta?.after ?? null,
+      };
+    });
+    res.json({
+      contests,
+      submissions: recent.map((row) => ({
+        id: String(row._id),
+        problemId: String(row.problemId),
+        title: titles.get(String(row.problemId)) ?? 'Problem',
+        language: row.language,
+        verdict: row.verdict,
+        kind: row.kind,
+        submittedAt: row.submittedAt,
+      })),
+    });
   }));
 
   app.get('/api/me', asyncRoute(async (req, res) => {
@@ -701,7 +772,14 @@ export function createApp(deps: AppDeps) {
       code: z.string().min(1).max(64_000),
     }).parse(req.body);
     await submitLimit(user.sub);
-    const queued = await enqueueSubmission(db, { ...body, userId: user.sub, contestId: req.params.id, kind: 'contest', idempotencyKey: idempotencyKey(req) });
+    const queued = await enqueueSubmission(db, {
+      ...body,
+      userId: user.sub,
+      contestId: req.params.id,
+      kind: 'contest',
+      idempotencyKey: idempotencyKey(req),
+      ipHash: hashIp(req.ip || req.socket.remoteAddress || ''),
+    });
     if (!queued.replay) {
       await redis.xadd(queued.stream, '*', 'submissionId', queued.id);
       submitted.inc({ kind: 'contest' });
@@ -719,6 +797,60 @@ export function createApp(deps: AppDeps) {
     const result = await rejudgeSubmissions(db, redis, { contestId: req.params.id, actor: user.sub, reason: body.reason, submissionId: body.submissionId, problemId: body.problemId });
     await audit(db, user.sub, 'contest.rejudge', req.params.id, 'allow', { before: result.before, after: result.after, reason: body.reason });
     res.status(202).json({ count: result.count });
+  }));
+
+  app.get('/api/contests/:id/integrity', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['organiser', 'admin']);
+    const report = await db.collection('similarity_reports').findOne({ contestId: new ObjectId(req.params.id) });
+    const pairs = (report?.pairs as { userA: string; userB: string; problemId: string }[]) ?? [];
+    const userIds = [...new Set(pairs.flatMap((pair) => [pair.userA, pair.userB]))].map((id) => new ObjectId(id));
+    const problemIds = [...new Set(pairs.map((pair) => pair.problemId))].map((id) => new ObjectId(id));
+    const [users, problems] = await Promise.all([
+      userIds.length ? db.collection('users').find({ _id: { $in: userIds } }).project({ displayName: 1 }).toArray() : [],
+      problemIds.length ? db.collection('problems').find({ _id: { $in: problemIds } }).project({ title: 1 }).toArray() : [],
+    ]);
+    const names = new Map(users.map((row) => [String(row._id), row.displayName]));
+    const titles = new Map(problems.map((row) => [String(row._id), row.title]));
+    await audit(db, user.sub, 'integrity.view', req.params.id, 'allow', { reason: `${pairs.length} pairs` });
+    res.json({
+      updatedAt: report?.updatedAt ?? null,
+      pairs: pairs.map((pair) => ({
+        ...pair,
+        nameA: names.get(pair.userA) ?? pair.userA,
+        nameB: names.get(pair.userB) ?? pair.userB,
+        problem: titles.get(pair.problemId) ?? pair.problemId,
+      })),
+    });
+  }));
+
+  app.post('/api/contests/:id/integrity/run', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['organiser', 'admin']);
+    res.json(await runSimilarity(db, req.params.id, user.sub));
+  }));
+
+  app.get('/api/contests/:id/integrity/pairs/:pairId', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['organiser', 'admin']);
+    const report = await db.collection('similarity_reports').findOne({ contestId: new ObjectId(req.params.id) });
+    const pair = ((report?.pairs as { id: string; submissionA: string; submissionB: string }[]) ?? []).find((row) => row.id === req.params.pairId);
+    if (!pair) throw new HttpError(404, 'Pair not found');
+    const [a, b] = await Promise.all([
+      db.collection('submissions').findOne({ _id: new ObjectId(pair.submissionA) }, { projection: { code: 1, language: 1 } }),
+      db.collection('submissions').findOne({ _id: new ObjectId(pair.submissionB) }, { projection: { code: 1, language: 1 } }),
+    ]);
+    await audit(db, user.sub, 'integrity.view_code', req.params.pairId, 'allow', { reason: req.params.id });
+    res.json({ ...pair, codeA: a?.code ?? '', codeB: b?.code ?? '', languageA: a?.language ?? '', languageB: b?.language ?? '' });
+  }));
+
+  app.post('/api/contests/:id/integrity/pairs/:pairId', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['organiser', 'admin']);
+    const body = z.object({ decision: z.enum(['dismissed', 'confirmed']), note: z.string().max(500).default('') }).parse(req.body);
+    const updated = await db.collection('similarity_reports').updateOne(
+      { contestId: new ObjectId(req.params.id), 'pairs.id': req.params.pairId },
+      { $set: { 'pairs.$.status': body.decision, 'pairs.$.note': body.note } },
+    );
+    if (updated.matchedCount === 0) throw new HttpError(404, 'Pair not found');
+    await audit(db, user.sub, 'integrity.decision', req.params.pairId, body.decision, { reason: body.note });
+    res.json({ status: body.decision });
   }));
 
   app.post('/api/run', asyncRoute(async (req, res) => {
@@ -1005,6 +1137,9 @@ export function createApp(deps: AppDeps) {
       draftedSpec: run.draftedSpec ?? null,
       calls: run.calls ?? 0,
       tokens: run.tokens ?? 0,
+      model: run.model ?? null,
+      aiNote: run.aiNote ?? null,
+      callLog: run.callLog ?? [],
       error: run.error ?? null,
       createdAt: run.createdAt,
       startedAt: run.startedAt ?? null,
@@ -1044,6 +1179,16 @@ export function createApp(deps: AppDeps) {
     res.json(await approveProposals(db, [...new Set(body.proposalIds)], user.sub));
   }));
 
+  app.get('/api/agent/models', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const key = geminiKeysFromEnv()[0];
+    if (!key || (process.env.AGENT_PROVIDER ?? '').trim().toLowerCase() !== 'gemini') {
+      res.json({ models: [] });
+      return;
+    }
+    res.json({ models: await listGeminiModels(key) });
+  }));
+
   app.get('/api/agent/status', asyncRoute(async (req, res) => {
     requireRole(req, ['setter', 'admin']);
     const config = providerFromEnv();
@@ -1055,12 +1200,8 @@ export function createApp(deps: AppDeps) {
       { $group: { _id: null, tokens: { $sum: '$payload.tokens' } } },
     ]).toArray();
     const monthly = { used: (used[0]?.tokens as number) ?? 0, cap: Number(process.env.AGENT_MONTHLY_TOKEN_CAP ?? 200_000) };
-    const recent = await db.collection('hardening_runs')
-      .find({ aiStatus: { $in: ['RATE_LIMITED', 'ERROR'] }, finishedAt: { $gt: new Date(Date.now() - 15 * 60_000) } })
-      .sort({ finishedAt: -1 }).limit(1).next();
     let status: string = config.status;
     if (status === 'AVAILABLE' && monthly.used >= monthly.cap) status = 'BUDGET_EXCEEDED';
-    else if (status === 'AVAILABLE' && recent) status = recent.aiStatus as string;
     res.json({
       status,
       provider: config.provider?.name ?? null,

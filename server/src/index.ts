@@ -1,4 +1,8 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+config({ path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env') });
 import { expireRuns } from '@codeclash/agent/worker';
 import { createServer } from 'node:http';
 import { Redis } from 'ioredis';

@@ -36,6 +36,7 @@ export async function enqueueSubmission(
     code: string;
     kind: 'contest' | 'practice';
     idempotencyKey?: string;
+    ipHash?: string | null;
   },
 ) {
   const requested = await db.collection('problem_versions').findOne({ _id: new ObjectId(input.problemVersionId) });
@@ -76,6 +77,7 @@ export async function enqueueSubmission(
     language: input.language,
     code: input.code,
     kind: input.kind,
+    ipHash: input.ipHash ?? null,
     status: 'queued',
     idempotencyKey: input.idempotencyKey ?? null,
     claimToken: null,

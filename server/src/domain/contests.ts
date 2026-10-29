@@ -29,6 +29,10 @@ export async function transitionContest(db: Db, contestId: string, to: ContestSt
     sentAt: null,
   });
   let ratingDeltas: unknown[] = [];
+  if (to === 'ended') {
+    const { runSimilarity } = await import('./similarity.js');
+    await runSimilarity(db, contestId, actorId).catch(() => {});
+  }
   if (to === 'published') {
     const { applyRatings } = await import('./product.js');
     ratingDeltas = await applyRatings(db, contestId);

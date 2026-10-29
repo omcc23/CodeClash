@@ -5,8 +5,6 @@ export interface Session {
   access: string;
   refresh: string;
   user: { id: string; role: string; displayName?: string; emailVerified?: boolean; rating?: number };
-  /** Present in local development, where there is no mail server. */
-  verifyToken?: string;
 }
 
 export function loadSession(): Session | null {

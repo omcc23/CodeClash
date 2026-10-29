@@ -51,6 +51,12 @@ services:
           print("users ready");
         '
 
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   redis:
     image: redis:7
     ports:

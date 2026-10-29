@@ -80,17 +80,23 @@ export function Problemset() {
       <div className="with-side">
         <div className="stack">
           <div className="filters">
-            <div className="row" role="group" aria-label="Filter by difficulty">
-              {['', 'easy', 'medium', 'hard'].map((item) => (
-                <button key={item || 'all'} type="button" className={`chip ${difficulty === item ? 'on' : ''}`} onClick={() => update({ difficulty: item })}>{item || 'any difficulty'}</button>
-              ))}
-              <span className="filters-sep" aria-hidden />
-              {['', 'solved', 'attempted', 'unsolved'].map((item) => (
-                <button key={`s-${item || 'any'}`} type="button" className={`chip ${status === item ? 'on' : ''}`} onClick={() => update({ status: item })}>{item || 'any status'}</button>
-              ))}
+            <div className="filter-groups">
+              <div className="row" role="group" aria-label="Filter by difficulty">
+                <span className="muted small">difficulty</span>
+                {['', 'easy', 'medium', 'hard'].map((item) => (
+                  <button key={item || 'all'} type="button" className={`chip ${difficulty === item ? 'on' : ''}`} onClick={() => update({ difficulty: item })}>{item || 'any'}</button>
+                ))}
+              </div>
+              <div className="row" role="group" aria-label="Filter by status">
+                <span className="muted small">you</span>
+                {['', 'solved', 'attempted', 'unsolved'].map((item) => (
+                  <button key={`s-${item || 'any'}`} type="button" className={`chip ${status === item ? 'on' : ''}`} onClick={() => update({ status: item })}>{item || 'any'}</button>
+                ))}
+              </div>
             </div>
             {data && data.tags.length > 0 ? (
               <div className="row" role="group" aria-label="Filter by tag">
+                <span className="muted small">tags</span>
                 <button type="button" className={`chip ${tag === '' ? 'on' : ''}`} onClick={() => update({ tag: '' })}>all tags</button>
                 {(allTags ? data.tags : data.tags.slice(0, TOP_TAGS)).map((item) => (
                   <button key={item} type="button" className={`chip ${tag === item ? 'on' : ''}`} onClick={() => update({ tag: tag === item ? '' : item })}>{item}</button>
@@ -118,12 +124,12 @@ export function Problemset() {
                 </thead>
                 <tbody>
                   {items.map((item, index) => (
-                    <tr key={item.versionId} className={item.status === 'solved' ? 'solved' : ''}>
+                    <tr key={item.versionId} className={item.status === 'solved' ? 'solved' : item.status === 'attempted' ? 'tried' : ''}>
                       <td className="muted num">{String(first + index).padStart(3, '0')}</td>
                       <td>
                         <Link className="row-link" to={`/practice/${item.versionId}`}>{item.title}</Link>
                         <div className="row tag-row">
-                          {item.source ? <span className="muted small">{item.source}</span> : null}
+                          {item.source ? <span className="pill">{item.source}</span> : null}
                           {item.tags.map((t) => <button key={t} type="button" className={`chip ${tag === t ? 'on' : ''}`} onClick={() => update({ tag: t })}>{t}</button>)}
                         </div>
                       </td>
@@ -163,9 +169,6 @@ export function Problemset() {
           </Box>
           <Box title="how scoring works">
             <p className="muted small" style={{ margin: 0 }}>Run samples checks the visible examples and records nothing. Submit judges the hidden tests. A problem with subtasks keeps the points of every group you fully solve.</p>
-          </Box>
-          <Box title="sources">
-            <p className="muted small" style={{ margin: 0 }}>Problems marked Codeforces come from the DeepMind CodeContests dataset (CC BY 4.0). Each was re-verified in our sandbox before import.</p>
           </Box>
         </aside>
       </div>

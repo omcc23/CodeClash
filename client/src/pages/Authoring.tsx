@@ -30,7 +30,7 @@ interface Version {
   report: string[];
 }
 interface SpecCheck { ok: boolean; parseError: string | null; failures: { test: number; error: string }[]; checked: number; drafted: string | null }
-type Section = 'statement' | 'tests' | 'spec' | 'solutions' | 'agent';
+type Section = 'statement' | 'tests' | 'solutions' | 'check';
 
 const EDITABLE = ['draft', 'blocked'];
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,6 +45,7 @@ export function Authoring() {
   const versionId = params.get('v') ?? '';
   const [problems, setProblems] = useState<ProblemRow[]>([]);
   const [filter, setFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [version, setVersion] = useState<Version | null>(null);
   const [dirty, setDirty] = useState(false);
   const [section, setSection] = useState<Section>('statement');
@@ -181,7 +182,7 @@ export function Authoring() {
 
   function harden() {
     if (dirty && !window.confirm('Hardening uses the saved version. Continue without saving?')) return;
-    setSection('agent');
+      setSection('check');
     setHardenRequest((n) => n + 1);
   }
 
@@ -213,7 +214,12 @@ export function Authoring() {
   }
 
   const editable = version ? EDITABLE.includes(version.status) : false;
-  const shown = problems.filter((p) => p.title.toLowerCase().includes(filter.toLowerCase()));
+  const shown = problems.filter((p) => p.title.toLowerCase().includes(filter.toLowerCase()) && (!statusFilter || p.status === statusFilter));
+  const blockedReason = !version ? ''
+    : !editable ? ''
+      : !version.reference?.code ? 'Add a reference solution before publish check or harden.'
+        : version.tests.length === 0 ? 'Add at least one test before harden.'
+          : '';
 
   return (
     <div className="page wide author-page">
@@ -225,32 +231,22 @@ export function Authoring() {
       </div>
       {error ? <Alert>{error}</Alert> : null}
       <div className="author">
-        <aside className="box author-side">
-          <header className="box-head">
-            <strong>problems</strong>
-            <span>{problems.length}</span>
-          </header>
-          <div className="side-find">
-            <div className="input-icon">
-              <Search size={14} />
-              <input aria-label="Filter problems" placeholder="Filter by name" value={filter} onChange={(e) => setFilter(e.target.value)} />
-            </div>
+        <div className="author-switch">
+          <div className="input-icon">
+            <Search size={14} />
+            <input aria-label="Filter problems" placeholder="Find a problem" value={filter} onChange={(e) => setFilter(e.target.value)} />
           </div>
-          <ul className="plist">
-            {shown.length === 0 ? <li className="muted small plist-empty">No matches</li> : shown.map((p) => (
-              <li key={p.problemId}>
-                <button type="button" className={p.versionId === versionId && !creating ? 'on' : ''} onClick={() => { setCreating(false); select(p.versionId); }}>
-                  <span className="plist-name">{p.title}</span>
-                  <span className="plist-meta">v{p.version}</span>
-                  <StatusPill status={p.status} label={p.status} />
-                </button>
-              </li>
+          <select aria-label="Open problem" value={creating ? '' : versionId} onChange={(e) => { setCreating(false); select(e.target.value); }}>
+            <option value="" disabled>{shown.length === 0 ? 'No matches' : `${shown.length} problems`}</option>
+            {shown.map((p) => <option key={p.versionId} value={p.versionId}>{p.title} · v{p.version} · {p.status}</option>)}
+          </select>
+          <div className="row" role="group" aria-label="Filter by status">
+            {['', 'draft', 'blocked', 'published'].map((item) => (
+              <button key={item || 'all'} type="button" className={`chip ${statusFilter === item ? 'on' : ''}`} onClick={() => setStatusFilter(item)}>{item || 'all'}</button>
             ))}
-          </ul>
-          <button className="term-new" type="button" onClick={() => setCreating(true)}>
-            <FilePlus2 size={14} /> new problem
-          </button>
-        </aside>
+          </div>
+          <button className="btn" type="button" onClick={() => setCreating(true)}><FilePlus2 size={14} /> new problem</button>
+        </div>
 
         <section className="author-main">
           {creating ? (
@@ -282,9 +278,8 @@ export function Authoring() {
               <header className="box-head"><strong>editor</strong></header>
               <div className="author-body empty-file">
                 <Empty icon={<FilePlus2 size={28} />} title="Nothing open">
-                  Pick a problem from the list, or start a new one.
+                  Pick a problem from the list, or use new problem in the sidebar.
                 </Empty>
-                <button className="btn primary" type="button" onClick={() => setCreating(true)}><FilePlus2 size={14} /> new problem</button>
               </div>
             </div>
           ) : (
@@ -301,13 +296,21 @@ export function Authoring() {
                 <div className="row">
                   {!editable && version.status !== 'checking' ? <button className="btn sm" type="button" onClick={newVersion} disabled={working !== ''}><Plus size={14} /> new version</button> : null}
                   <button className="btn sm" type="button" disabled={!editable || working !== '' || !dirty} onClick={save}><Save size={14} /> {working === 'save' ? 'saving…' : 'save'}</button>
-                  <button className="btn sm" type="button" disabled={!version.reference || version.tests.length === 0 || working !== ''} onClick={harden}><Bot size={14} /> harden tests</button>
-                  <button className="btn primary sm" type="button" disabled={!editable || !version.reference || working !== ''} onClick={publishCheck}>
-                    <ShieldCheck size={14} /> {working === 'check' || version.status === 'checking' ? 'checking in sandbox…' : 'publish check'}
-                  </button>
                 </div>
               </div>
 
+              <nav className="steps-nav" role="tablist" aria-label="Authoring steps">
+                {([
+                  ['statement', 'Write'],
+                  ['tests', 'Tests'],
+                  ['solutions', 'Solutions'],
+                  ['check', 'Check'],
+                ] as const).map(([key, name], index) => (
+                  <button key={key} type="button" role="tab" aria-selected={section === key} className={`step-tab ${section === key ? 'on' : ''}`} onClick={() => setSection(key)}>
+                    <span className="num">{index + 1}</span> {name}
+                  </button>
+                ))}
+              </nav>
               {version.report.length > 0 ? (
                 <Alert tone={version.status === 'published' ? 'ok' : 'bad'}>
                   <strong>{version.status === 'published' ? 'Publish check passed' : 'Publish check blocked this version'}</strong>
@@ -315,17 +318,6 @@ export function Authoring() {
                 </Alert>
               ) : null}
               {!editable ? <Alert tone="info">This version is {version.status} and cannot change. {version.status !== 'checking' ? 'Start a new version to edit it.' : 'Wait for the check to finish.'}</Alert> : null}
-
-              <nav className="tabs" role="tablist" aria-label="Sections">
-                {([['statement', 'statement'], ['tests', 'tests'], ['spec', 'spec'], ['solutions', 'solutions'], ['agent', 'hardening']] as const).map(([key, name]) => (
-                  <button key={key} type="button" role="tab" aria-selected={section === key} className={`tab ${section === key ? 'on' : ''}`} onClick={() => setSection(key)}>
-                    {name}
-                    {key === 'tests' ? <span className="count">{version.tests.length}</span> : null}
-                    {key === 'spec' && !version.inputSpec.trim() ? <span className="count">none</span> : null}
-                    {key === 'solutions' ? <span className="count">{(version.reference ? 1 : 0) + version.wrongSolutions.length}</span> : null}
-                  </button>
-                ))}
-              </nav>
               <div className="author-body">
 
               {section === 'statement' ? (
@@ -335,12 +327,12 @@ export function Authoring() {
                         <div><label htmlFor="title" style={{ marginTop: 0 }}>Title</label><input id="title" value={version.title} onChange={(e) => patch({ title: e.target.value })} /></div>
                         <div><label htmlFor="tags" style={{ marginTop: 0 }}>Tags (comma separated)</label><input id="tags" value={tagText} onChange={(e) => onTags(e.target.value)} /></div>
                         <div>
-                          <label htmlFor="difficulty" style={{ marginTop: 0 }}>Difficulty</label>
-                          <select id="difficulty" value={version.difficulty ?? 'medium'} onChange={(e) => patch({ difficulty: e.target.value as Version['difficulty'] })}>
-                            <option value="easy">easy</option>
-                            <option value="medium">medium</option>
-                            <option value="hard">hard</option>
-                          </select>
+                          <label style={{ marginTop: 0 }}>Difficulty</label>
+                          <div className="segmented" role="radiogroup" aria-label="Difficulty">
+                            {(['easy', 'medium', 'hard'] as const).map((level) => (
+                              <button key={level} type="button" role="radio" aria-checked={(version.difficulty ?? 'medium') === level} className={(version.difficulty ?? 'medium') === level ? 'on' : ''} onClick={() => patch({ difficulty: level })}>{level}</button>
+                            ))}
+                          </div>
                         </div>
                       </div>
                       <label htmlFor="statement">Statement · blank lines split paragraphs; a line “Input”, “Output” or “Note” starts a section; `x` is code</label>
@@ -394,12 +386,13 @@ export function Authoring() {
                       <div key={index} className="field-row">
                         <div><label>Name</label><input aria-label={`Subtask ${index + 1} name`} value={subtask.name} onChange={(e) => patch({ subtasks: version.subtasks.map((s, i) => (i === index ? { ...s, name: e.target.value } : s)) })} /></div>
                         <div><label>Points</label><input aria-label={`Subtask ${index + 1} points`} type="number" min={1} value={subtask.points} onChange={(e) => patch({ subtasks: version.subtasks.map((s, i) => (i === index ? { ...s, points: Number(e.target.value) } : s)) })} /></div>
+                        <div style={{ display: 'flex', alignItems: 'flex-end' }}><button className="btn danger sm" type="button" aria-label={`Remove subtask ${index + 1}`} onClick={() => patch({ subtasks: version.subtasks.filter((_, i) => i !== index) })}><Trash2 size={13} /></button></div>
                       </div>
                     ))}
                   </>
                 ) : null}
 
-                {section === 'spec' ? (
+                {section === 'tests' ? (
                   <div className="two">
                     <div>
                       <label htmlFor="spec" style={{ marginTop: 0 }}>Input spec · one line per input line</label>
@@ -461,7 +454,7 @@ export function Authoring() {
                       <p className="section-title">Wrong solutions <span className="muted small">· each must fail at least one test</span></p>
                       <button className="btn sm" type="button" onClick={() => patch({ wrongSolutions: [...version.wrongSolutions, { label: `wrong-${version.wrongSolutions.length + 1}`, language: 'python', code: '' }] })}><Plus size={14} /> add</button>
                     </div>
-                    {version.wrongSolutions.length === 0 ? <p className="muted small">None yet. The agent can propose some from the agent tab.</p> : null}
+                    {version.wrongSolutions.length === 0 ? <p className="muted small">None yet. The Check step can propose some.</p> : null}
                     {version.wrongSolutions.map((solution, index) => (
                       <SolutionEditor
                         key={index}
@@ -476,7 +469,15 @@ export function Authoring() {
                 ) : null}
               </fieldset>
 
-              {section === 'agent' ? (
+              {section === 'check' ? (
+                <div className="stack">
+                  <div className="row">
+                    <button className="btn primary" type="button" disabled={!editable || !version.reference || working !== ''} onClick={publishCheck}>
+                      <ShieldCheck size={14} /> {working === 'check' || version.status === 'checking' ? 'checking in sandbox…' : 'publish check'}
+                    </button>
+                    <button className="btn" type="button" disabled={!version.reference || version.tests.length === 0 || working !== ''} onClick={harden}><Bot size={14} /> harden</button>
+                  </div>
+                  {blockedReason ? <p className="muted small">{blockedReason}</p> : <p className="muted small">Publish check proves the reference and the wrong solutions. Harden looks for tests the suite is missing.</p>}
                 <Hardening
                   problemId={version.problemId}
                   versionId={version.versionId}
@@ -484,8 +485,9 @@ export function Authoring() {
                   startRequest={hardenRequest}
                   onStartHandled={() => setHardenRequest(0)}
                   onApproved={(id) => { void approved(id); }}
-                  onDraftSpec={(spec) => { patch({ inputSpec: spec }); setSection('spec'); }}
+                  onDraftSpec={(spec) => { patch({ inputSpec: spec }); setSection('tests'); }}
                 />
+                </div>
               ) : null}
               </div>
             </div>

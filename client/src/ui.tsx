@@ -186,6 +186,34 @@ export function Empty({ icon, title, children }: { icon?: ReactNode; title: stri
   );
 }
 
+export function ConfirmDialog({ title, body, confirm, danger, busy, onConfirm, onCancel }: {
+  title: string;
+  body: string;
+  confirm: string;
+  danger?: boolean;
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onCancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+  return (
+    <div className="modal-back" role="presentation" onMouseDown={onCancel}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onMouseDown={(event) => event.stopPropagation()}>
+        <h2 id="confirm-title">{title}</h2>
+        <p>{body}</p>
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button className="btn" type="button" onClick={onCancel} disabled={busy}>back</button>
+          <button className={`btn ${danger ? 'danger' : 'primary'}`} type="button" onClick={onConfirm} disabled={busy}>{busy ? 'working…' : confirm}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Alert({ tone = 'bad', children }: { tone?: 'bad' | 'ok' | 'warn' | 'info'; children: ReactNode }) {
   const Icon = tone === 'ok' ? CheckCircle2 : tone === 'warn' ? AlertTriangle : tone === 'info' ? Info : XCircle;
   return (

@@ -1,7 +1,7 @@
 import { Eye, EyeOff, LogOut } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, type Session } from '../api';
-import { Alert, Box, errorText, toast } from '../ui';
+import { Alert, Box, errorText, toast, VERDICT_NAMES, verdictTone } from '../ui';
 
 interface Me {
   id: string;
@@ -13,6 +13,25 @@ interface Me {
   streak: number;
   days: string[];
 }
+
+interface HistoryContest {
+  id: string;
+  title: string;
+  startsAt: string;
+  rank: number | null;
+  field: number;
+  solved: number;
+  delta: number;
+}
+interface HistorySubmission {
+  id: string;
+  title: string;
+  language: string;
+  verdict: string | null;
+  kind: string;
+  submittedAt: string;
+}
+interface History { contests: HistoryContest[]; submissions: HistorySubmission[] }
 
 export function Profile({ session, onSession, onSignOut }: {
   session: Session;
@@ -27,9 +46,11 @@ export function Profile({ session, onSession, onSignOut }: {
   const [again, setAgain] = useState('');
   const [reveal, setReveal] = useState(false);
   const [working, setWorking] = useState('');
+  const [history, setHistory] = useState<History | null>(null);
 
   useEffect(() => {
     api<Me>('/api/me').then((row) => { setMe(row); setName(row.displayName); }).catch((e) => setError(errorText(e)));
+    api<History>('/api/me/history').then(setHistory).catch(() => setHistory({ contests: [], submissions: [] }));
   }, []);
 
   async function saveName(event: FormEvent) {
@@ -131,6 +152,42 @@ export function Profile({ session, onSession, onSignOut }: {
               <button className="btn primary" type="submit" disabled={working !== ''}>{working === 'password' ? 'saving…' : 'change password'}</button>
             </div>
           </form>
+        </Box>
+      </div>
+
+      <div className="profile-grid" style={{ marginTop: '1rem' }}>
+        <Box title="contests" flush>
+          {history === null ? <p className="muted small" style={{ margin: '0.8rem' }}>Loading contests…</p> : history.contests.length === 0 ? <p className="muted small" style={{ margin: '0.8rem' }}>No finished contests yet.</p> : (
+            <table>
+              <thead><tr><th>contest</th><th>rank</th><th>solved</th><th className="r">rating</th></tr></thead>
+              <tbody>
+                {history.contests.map((contest) => (
+                  <tr key={contest.id}>
+                    <td>{contest.title}<div className="muted small">{new Date(contest.startsAt).toLocaleDateString()}</div></td>
+                    <td className="num">{contest.rank ? `${contest.rank}/${contest.field}` : '—'}</td>
+                    <td className="num">{contest.solved}</td>
+                    <td className={`r num ${contest.delta >= 0 ? 'ok' : 'bad'}`}>{contest.delta >= 0 ? '+' : ''}{contest.delta}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Box>
+        <Box title="recent submissions" flush>
+          {history === null ? <p className="muted small" style={{ margin: '0.8rem' }}>Loading submissions…</p> : history.submissions.length === 0 ? <p className="muted small" style={{ margin: '0.8rem' }}>No judged submissions yet.</p> : (
+            <table>
+              <thead><tr><th>problem</th><th>lang</th><th>verdict</th></tr></thead>
+              <tbody>
+                {history.submissions.map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.title}<div className="muted small">{row.kind} · {new Date(row.submittedAt).toLocaleString()}</div></td>
+                    <td className="muted small">{row.language}</td>
+                    <td><span className={verdictTone(row.verdict) === 'ok' ? 'ok' : verdictTone(row.verdict) === 'warn' ? 'warn' : 'bad'}>{VERDICT_NAMES[row.verdict ?? ''] ?? row.verdict}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </Box>
       </div>
     </div>
